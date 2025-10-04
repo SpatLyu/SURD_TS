@@ -164,3 +164,29 @@ def transfer_entropy(p, target_var):
     return TE
 
 
+def create_pfm( s, a, dt, bins ):
+    '''compute the joint PMF of variables
+        
+        pfm = create_pfm( s, a, dt )
+    Parameters
+        s:      [np.ndarray]
+            temporal evolution of target variable [size (Nt,)]
+        a:      [ tuple ]
+            each element must be an np.ndarray of size (Nt,)
+            with the temporal evolution of agent variables
+        dt:     [int]
+            time lag in number of time steps
+        bins:     [int]
+            number of bins (states) per dimension
+    Returns
+        pfm     [np.ndarray]
+            Mass probability function ( size ( bins, ..., bins ), dim = 1 + len(a) )
+    
+    '''
+    V = np.vstack([ s[dt:], [ a[i][:-dt] for i in range(len(a)) ] ]).T
+    
+    # Histogram computes the bins by equally splitting the interval max(var)-min(var)
+    h, _ = np.histogramdd( V, bins=bins )
+    return h/h.sum()
+
+
