@@ -56,8 +56,9 @@ def entropy_nvars(p, indices):
     Example: compute the joint entropy H(X0,X3,X7)
     >>> entropy_nvars(p, (0,3,7))
     """
+    
     excluded_indices = tuple(set(range(p.ndim)) - set(indices))
-    marginalized_distribution = p.sum(axis=excluded_indices)
+    marginalized_distribution = p if not excluded_indices else p.sum(axis=excluded_indices)
 
     return entropy(marginalized_distribution)
 
