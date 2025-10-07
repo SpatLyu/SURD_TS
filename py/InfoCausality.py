@@ -6,7 +6,7 @@ from joblib import Parallel, delayed
 
 class InfoCausality:
     """
-    InfoCausality class for Information-Theoretic Causality Analysis.
+    InfoCausality Class for Information-Theoretic Causality Analysis.
     Supports:
         - Shannon entropy
         - Mutual information
@@ -17,7 +17,7 @@ class InfoCausality:
 
     def __init__(self, x: np.ndarray, nbins: int = 8):
         """
-        Initialize InfoCausality class from raw target-agents original-lagged data.
+        Initialize InfoCausality Class from raw target-agents original-lagged data.
 
         Parameters
         ----------
