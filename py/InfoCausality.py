@@ -37,7 +37,7 @@ class InfoCausality:
     def create_pfm(x: np.ndarray, nbins: int) -> np.ndarray:
         """Create joint probability frequency matrix."""
         hist, _ = np.histogramdd(x, bins=nbins)
-        hist += 1e-14 #hist = np.maximum(hist, 1e-14)
+        hist = np.maximum(hist, 1e-14) #hist += 1e-14 
         hist /= hist.sum()
         return hist
 
@@ -146,9 +146,9 @@ class InfoCausality:
 
         # ========== Compute Is (parallelized) ==========
         if max_combs is None:
-            comb_list = [j for i in inds for j in list(icmb(inds, i))]
+            comb_list = [j for i in inds for j in icmb(inds, i)]
         else:
-            comb_list = [j for i in range(1, max_combs + 1) for j in list(icmb(inds, i))]
+            comb_list = [j for i in range(1, max_combs + 1) for j in icmb(inds, i)]
 
         results = Parallel(n_jobs=n_jobs, backend=backend)(
             delayed(compute_Is)(j) for j in comb_list
@@ -162,10 +162,7 @@ class InfoCausality:
             I_R = {cc: 0 for cc in comb_list}
             I_S = {cc: 0 for cc in comb_list[self.Nvars:]}
         else:
-            red_combs = []
-            for i in range(1, max_combs + 1):
-                for j in list(icmb(inds, i)):
-                    red_combs.append(j)
+            red_combs = [j for i in range(1, max_combs + 1) for j in icmb(inds, i)]
             I_R = {cc: 0 for cc in red_combs}
             I_S = {cc: 0 for cc in comb_list if len(cc) > 1}
 
