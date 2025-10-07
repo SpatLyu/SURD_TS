@@ -1,6 +1,8 @@
 import numpy as np
 from itertools import combinations as icmb
 from typing import Tuple, Dict, Optional
+from joblib import Parallel, delayed
+
 
 class InfoCausality:
     """
@@ -13,91 +15,98 @@ class InfoCausality:
         - SURD decomposition (Synergy, Unique, Redundancy)
     """
 
-    def __init__(self, p: np.ndarray):
+    def __init__(self, x: np.ndarray, nbins: int = 8):
         """
-        Initialize with the joint probability distribution.
+        Initialize InfoCausality class from raw target-agents original-lagged data.
 
         Parameters
         ----------
-        p : np.ndarray
-            N-dimensional joint probability distribution.
-            First dimension is the target variable (future),
-            remaining dimensions are agent variables (present).
+        x : np.ndarray
+            2D array where:
+                - First column is the target variable (future)
+                - Remaining columns are agent (predictor) variables.
+        nbins : int
+            Number of bins (states) per variable dimension for discretization.
         """
-        self.p = np.maximum(p, 1e-14)
-        self.p /= self.p.sum()
+        self.p = self.create_pfm(x, nbins)
         self.Ntot = self.p.ndim
         self.Nvars = self.Ntot - 1
         self.Nt = self.p.shape[0]
 
-    # ----------------------
-    # Information theory utils
-    # ----------------------
+    @staticmethod
+    def create_pfm(x: np.ndarray, nbins: int) -> np.ndarray:
+        """Create joint probability frequency matrix."""
+        hist, _ = np.histogramdd(x, bins=nbins)
+        hist = np.maximum(hist, 1e-14)
+        hist /= hist.sum()
+        return hist
+
     @staticmethod
     def mylog(x: np.ndarray) -> np.ndarray:
-        """Compute log2 avoiding singularities."""
-        valid = (x != 0) & (~np.isnan(x)) & (~np.isinf(x))
-        log_values = np.zeros_like(x)
-        log_values[valid] = np.log2(x[valid])
-        return log_values
+        valid = (x > 0) & np.isfinite(x)
+        res = np.zeros_like(x)
+        res[valid] = np.log2(x[valid])
+        return res
 
     @staticmethod
     def entropy(p: np.ndarray) -> float:
-        """Compute entropy of a probability distribution."""
         return -np.sum(p * InfoCausality.mylog(p))
 
     @staticmethod
     def entropy_nvars(p: np.ndarray, indices) -> float:
-        """Compute joint entropy over specified dimensions."""
         excluded = tuple(set(range(p.ndim)) - set(indices))
         marginalized = p if not excluded else p.sum(axis=excluded)
         return InfoCausality.entropy(marginalized)
 
     @staticmethod
     def cond_entropy(p: np.ndarray, target_indices, conditioning_indices) -> float:
-        """Compute conditional entropy H(target|conditioning)."""
-        joint = InfoCausality.entropy_nvars(p, set(target_indices) | set(conditioning_indices))
+        joint = InfoCausality.entropy_nvars(p, tuple(set(target_indices) | set(conditioning_indices)))
         cond = InfoCausality.entropy_nvars(p, conditioning_indices)
         return joint - cond
 
     @staticmethod
     def mutual_info(p: np.ndarray, set1_indices, set2_indices) -> float:
-        """Compute mutual information I(set1; set2)."""
         h1 = InfoCausality.entropy_nvars(p, set1_indices)
         cond_h = InfoCausality.cond_entropy(p, set1_indices, set2_indices)
         return h1 - cond_h
 
     @staticmethod
     def cond_mutual_info(p: np.ndarray, ind1, ind2, ind3) -> float:
-        """Compute conditional mutual information I(ind1; ind2 | ind3)."""
         combined = tuple(set(ind2) | set(ind3))
         return InfoCausality.cond_entropy(p, ind1, ind3) - InfoCausality.cond_entropy(p, ind1, combined)
 
-    @staticmethod
-    def transfer_entropy(p: np.ndarray, target_var: int) -> np.ndarray:
-        """Compute transfer entropy from all agent variables to target variable."""
-        num_vars = p.ndim - 1
+    def transfer_entropy(self) -> np.ndarray:
+        num_vars = self.Nvars
         TE = np.zeros(num_vars)
         for i in range(1, num_vars + 1):
             present_indices = tuple(range(1, num_vars + 1))
-            conditioning_indices = tuple([target_var] + [j for j in range(1, num_vars + 1) if j != i and j != target_var])
-            cond_ent_past = InfoCausality.cond_entropy(p, (0,), conditioning_indices)
-            cond_ent_past_input = InfoCausality.cond_entropy(p, (0,), present_indices)
+            conditioning_indices = tuple(j for j in range(1, num_vars + 1) if j != i)
+            cond_ent_past = InfoCausality.cond_entropy(self.p, (0,), conditioning_indices)
+            cond_ent_past_input = InfoCausality.cond_entropy(self.p, (0,), present_indices)
             TE[i - 1] = cond_ent_past - cond_ent_past_input
         return TE
 
-    # ----------------------
-    # SURD decomposition
-    # ----------------------
-    def surd(self, max_combs: Optional[int] = None) -> Tuple[Dict, Dict, Dict, float]:
+    # =====================================================
+    # SURD decomposition (with parallel computation support)
+    # =====================================================
+    def surd(
+        self,
+        max_combs: Optional[int] = None,
+        n_jobs: int = 1,
+        backend: str = "loky",
+    ) -> Tuple[Dict, Dict, Dict, float]:
         """
-        Compute unified SURD decomposition.
+        Compute unified SURD decomposition, optionally with parallelization.
 
         Parameters
         ----------
         max_combs : int or None
             Maximum combination order for high-dimensional synergy computation.
             If None, standard SURD decomposition is used.
+        n_jobs : int
+            Number of parallel jobs (default 1 = no parallel).
+        backend : str
+            Joblib backend: 'loky', 'threading', or 'multiprocessing'.
 
         Returns
         -------
@@ -110,67 +119,61 @@ class InfoCausality:
         info_leak : float
             Information leak ratio Hc/H.
         """
-        # --- Information leak
-        H = self.entropy_nvars(self.p, (0,))
-        Hc = self.cond_entropy(self.p, (0,), range(1, self.Ntot))
+        p = self.p
+        H = self.entropy_nvars(p, (0,))
+        Hc = self.cond_entropy(p, (0,), range(1, self.Ntot))
         info_leak = Hc / H
 
         inds = range(1, self.Ntot)
         Nt = self.Nt
 
-        # --- Standard SURD
+        # ========== Helper for parallel computing ==========
+        def compute_Is(j_tuple):
+            """Compute Is[j] for given agent combination j."""
+            if max_combs is None:
+                noj = tuple(set(inds) - set(j_tuple))
+                p_a = p.sum(axis=(0, *noj), keepdims=True)
+                p_as = p.sum(axis=noj, keepdims=True)
+            else:
+                axis_keep = (0,) + j_tuple
+                axis_sum = tuple(set(range(self.Ntot)) - set(axis_keep))
+                p_as = p.sum(axis=axis_sum, keepdims=True)
+                p_a = p.sum(axis=tuple(set(range(1, self.Ntot)) - set(j_tuple)), keepdims=True)
+            p_s = p.sum(axis=tuple(range(1, self.Ntot)), keepdims=True)
+            p_a_s = p_as / p_s
+            p_s_a = p_as / p_a
+            return j_tuple, (p_a_s * (self.mylog(p_s_a) - self.mylog(p_s))).sum(axis=j_tuple).ravel()
+
+        # ========== Compute Is (parallelized) ==========
         if max_combs is None:
-            p_s = self.p.sum(axis=(*inds,), keepdims=True)
-            combs, Is = [], {}
-
-            for i in inds:
-                for j in list(icmb(inds, i)):
-                    combs.append(j)
-                    noj = tuple(set(inds) - set(j))
-                    p_a = self.p.sum(axis=(0, *noj), keepdims=True)
-                    p_as = self.p.sum(axis=noj, keepdims=True)
-                    p_a_s = p_as / p_s
-                    p_s_a = p_as / p_a
-                    Is[j] = (p_a_s * (self.mylog(p_s_a) - self.mylog(p_s))).sum(axis=j).ravel()
-
-            MI = {k: (Is[k] * p_s.squeeze()).sum() for k in Is.keys()}
-            I_R = {cc: 0 for cc in combs}
-            I_S = {cc: 0 for cc in combs[self.Nvars:]}
-
-        # --- High-dimensional SURD
+            comb_list = [j for i in inds for j in list(icmb(inds, i))]
         else:
-            max_inds = range(1, max_combs + 1)
-            tot_inds = range(1, self.Ntot)
-            p_s = self.p.sum(axis=(*tot_inds,), keepdims=True)
-            combs, Is = [], {}
+            comb_list = [j for i in range(1, max_combs + 1) for j in list(icmb(inds, i))]
+
+        results = Parallel(n_jobs=n_jobs, backend=backend)(
+            delayed(compute_Is)(j) for j in comb_list
+        )
+        Is = dict(results)
+        p_s = p.sum(axis=tuple(range(1, self.Ntot)), keepdims=True)
+        MI = {k: (Is[k] * p_s.squeeze()).sum() for k in Is.keys()}
+
+        # ========== Initialize I_R, I_S ==========
+        if max_combs is None:
+            I_R = {cc: 0 for cc in comb_list}
+            I_S = {cc: 0 for cc in comb_list[self.Nvars:]}
+        else:
             red_combs = []
-
-            for i in max_inds:
-                for j in list(icmb(tot_inds, i)):
-                    combs.append(j)
-                    # Joint distributions: target + combination j
-                    axis_keep = (0,) + j
-                    axis_sum = tuple(set(range(self.Ntot)) - set(axis_keep))
-                    p_as = self.p.sum(axis=axis_sum, keepdims=True)
-                    p_a = self.p.sum(axis=tuple(set(tot_inds) - set(j)), keepdims=True)
-                    p_a_s = p_as / p_s
-                    p_s_a = p_as / p_a
-                    Is[j] = (p_a_s * (self.mylog(p_s_a) - self.mylog(p_s))).sum(axis=j).ravel()
-
-            MI = {k: (Is[k] * p_s.squeeze()).sum() for k in Is.keys()}
-
-            # Redundancy combinations
-            for i in max_inds:
-                for j in list(icmb(tot_inds, i)):
+            for i in range(1, max_combs + 1):
+                for j in list(icmb(inds, i)):
                     red_combs.append(j)
             I_R = {cc: 0 for cc in red_combs}
-            I_S = {cc: 0 for cc in combs if len(cc) > 1}
+            I_S = {cc: 0 for cc in comb_list if len(cc) > 1}
 
-        # --- Distribute MI to I_R / I_S
+        # ========== Distribute MI to I_R / I_S ==========
         for t in range(Nt):
             I1 = np.array([ii[t] for ii in Is.values()])
             i1 = np.argsort(I1)
-            lab = [list(combs[i_]) for i_ in i1]
+            lab = [list(comb_list[i_]) for i_ in i1]
             lens = np.array([len(l) for l in lab])
             I1 = I1[i1]
 
@@ -184,12 +187,13 @@ class InfoCausality:
             lab = [lab[i_] for i_ in i1]
             Di = np.diff(I1[i1], prepend=0.0)
             red_vars = list(inds)
-
+            
             for i_, ll in enumerate(lab):
                 info = Di[i_] * p_s.squeeze()[t]
                 if len(ll) == 1:
                     I_R[tuple(red_vars)] += info
-                    red_vars.remove(ll[0])
+                    if ll[0] in red_vars:
+                        red_vars.remove(ll[0])
                 else:
                     I_S[tuple(ll)] += info
 

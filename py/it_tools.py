@@ -78,7 +78,7 @@ def cond_entropy(p, target_indices, conditioning_indices):
     Example: compute the conditional entropy H(X0,X2|X7)
     >>> cond_entropy(p, (0, 2), (7,))
     """
-    joint_entropy = entropy_nvars(p, set(target_indices) | set(conditioning_indices))
+    joint_entropy = entropy_nvars(p, tuple(set(target_indices) | set(conditioning_indices)))
     conditioning_entropy = entropy_nvars(p, conditioning_indices)
 
     return joint_entropy - conditioning_entropy
