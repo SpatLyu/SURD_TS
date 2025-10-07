@@ -37,7 +37,7 @@ class InfoCausality:
     def create_pfm(x: np.ndarray, nbins: int) -> np.ndarray:
         """Create joint probability frequency matrix."""
         hist, _ = np.histogramdd(x, bins=nbins)
-        hist = np.maximum(hist, 1e-14)
+        hist += 1e-14 #hist = np.maximum(hist, 1e-14)
         hist /= hist.sum()
         return hist
 
