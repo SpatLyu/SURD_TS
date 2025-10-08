@@ -35,7 +35,8 @@ class InfoCausality:
 
     @staticmethod
     def create_pfm(x: np.ndarray, nbins: int) -> np.ndarray:
-        """Create joint probability frequency matrix."""
+        x = x[~np.isnan(x).any(axis=1)]
+        if not len(x): raise ValueError("All values are NaN in input array.")
         hist, _ = np.histogramdd(x, bins=nbins)
         hist = np.maximum(hist, 1e-14) #hist += 1e-14 
         hist /= hist.sum()
