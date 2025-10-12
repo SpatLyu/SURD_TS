@@ -84,4 +84,5 @@ qs_mediator = utils::tail(mediator(Nt),samples)
 res_q2 = infocausality::surd(qs_mediator,"q2",paste0("q",1:3),lag = nlag,bin = nbins,cores = 12)
 
 utils_process_surd_result(res_q2)
+
 utils_plot_surd(res_q2) + ggview::canvas(9,3)
