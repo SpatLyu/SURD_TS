@@ -3,7 +3,6 @@ from itertools import combinations as icmb
 from typing import Tuple, Dict, Optional
 from joblib import Parallel, delayed
 
-
 class InfoCausality:
     """
     InfoCausality Class for Information-Theoretic Causality Analysis.
@@ -15,24 +14,46 @@ class InfoCausality:
         - SURD decomposition (Synergy, Unique, Redundancy)
     """
 
-    def __init__(self, x: np.ndarray, nbins: int = 8):
+    def __init__(self, x: np.ndarray, nbins: Optional[int] = 8):
         """
-        Initialize InfoCausality Class from raw target-agents original-lagged data.
+        Initialize InfoCausality Class.
+
+        This class supports two initialization modes:
+        ---------------------------------------------------
+        1. **Raw numeric mode (nbins > 0)**:
+            The input `x` is continuous or discrete numeric data.
+            The method will automatically discretize it into a
+            probability frequency matrix (PFM) using `np.histogramdd`.
+
+        2. **Precomputed PFM mode (nbins <= 0 or None)**:
+            The input `x` is already an n-dimensional joint probability
+            matrix (PFM), such as one created by `RcppDiscMat2PFM` from R.
+            In this case, the matrix is used directly without modification.
 
         Parameters
         ----------
         x : np.ndarray
-            2D array where:
-                - First column is the target variable (future)
-                - Remaining columns are agent (predictor) variables.
-        nbins : int
-            Number of bins (states) per variable dimension for discretization.
+            - If nbins > 0: 2D array (samples × variables)
+              where the first column is the target (future variable)
+              and the remaining columns are agents (predictors).
+            - If nbins <= 0 or None: n-dimensional joint probability
+              frequency matrix already normalized to sum ≈ 1.
+        nbins : int or None, optional
+            Number of bins for discretization. If <= 0 or None, x is
+            assumed to be a precomputed probability matrix.
         """
-        self.p = self.create_pfm(x, nbins)
+        if nbins is None or nbins <= 0:
+            self.p = x
+        else:
+            self.p = self.create_pfm(x, nbins)
+
         self.Ntot = self.p.ndim
         self.Nvars = self.Ntot - 1
         self.Nt = self.p.shape[0]
-
+    
+    # =====================================================
+    # PFM construction from raw numeric data
+    # =====================================================
     @staticmethod
     def create_pfm(x: np.ndarray, nbins: int) -> np.ndarray:
         x = x[~np.isnan(x).any(axis=1)]
@@ -41,7 +62,10 @@ class InfoCausality:
         hist = np.maximum(hist, 1e-14) #hist += 1e-14 
         hist /= hist.sum()
         return hist
-
+    
+    # =====================================================
+    # Basic information-theoretic primitives
+    # =====================================================
     @staticmethod
     def mylog(x: np.ndarray) -> np.ndarray:
         valid = (x > 0) & np.isfinite(x)
@@ -75,7 +99,10 @@ class InfoCausality:
     def cond_mutual_info(p: np.ndarray, ind1, ind2, ind3) -> float:
         combined = tuple(set(ind2) | set(ind3))
         return InfoCausality.cond_entropy(p, ind1, ind3) - InfoCausality.cond_entropy(p, ind1, combined)
-
+    
+    # =====================================================
+    # Transfer Entropy computation
+    # =====================================================
     def transfer_entropy(self) -> np.ndarray:
         num_vars = self.Nvars
         TE = np.zeros(num_vars)
@@ -113,8 +140,8 @@ class InfoCausality:
         -------
         dict
             {
-                "synergistic": { "X1-X2": value, ... },
                 "unique": { "X1": value, "X2": value, ... },
+                "synergistic": { "X1-X2": value, ... },
                 "redundant": { "X1-X2": value, ... },
                 "mutual_info": { "X1-X2": value, ... },
                 "info_leak": float
@@ -216,21 +243,21 @@ class InfoCausality:
         norm = lambda d: {k: v / max_mi for k, v in d.items()}
 
         print("\nSURD Decomposition Results:")
-        print("  Redundant (R):")
-        for k_, v_ in norm(redundant_named).items():
-            print(f"    {k_:15s}: {v_:6.4f}")
         print("  Unique (U):")
         for k_, v_ in norm(unique_named).items():
             print(f"    {k_:15s}: {v_:6.4f}")
         print("  Synergistic (S):")
         for k_, v_ in norm(I_S_named).items():
             print(f"    {k_:15s}: {v_:6.4f}")
+        print("  Redundant (R):")
+        for k_, v_ in norm(redundant_named).items():
+            print(f"    {k_:15s}: {v_:6.4f}")
         print(f"  Information Leak: {info_leak * 100:6.2f}%\n")
 
         # ======== Return friendly structured dict ========
         result = {
-            "synergistic": I_S_named,
             "unique": unique_named,
+            "synergistic": I_S_named,
             "redundant": redundant_named,
             "mutual_info": MI_named,
             "info_leak": info_leak,
