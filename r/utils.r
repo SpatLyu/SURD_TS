@@ -51,7 +51,7 @@ utils_plot_surd = \(surd_list,threshold = 0){
   }
   df$label = factor(df$label, levels = df$label)
 
-  colors = c(unique = "#ec9e9e", synergistic = "#fac58c", redundant = "#8ca1ac")
+  colors = c(unique = "#ec9e9e", synergistic = "#fac58c", redundant = "#668392")
 
   p1 = ggplot2::ggplot(df, ggplot2::aes(x = label, y = value, fill = type)) +
     ggplot2::geom_col(color = "black", linewidth = 0.15, show.legend = FALSE) +
